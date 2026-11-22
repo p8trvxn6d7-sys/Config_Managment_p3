@@ -7,6 +7,8 @@ from uvm.machine import REGISTER_COUNT, Machine, VmError
 from uvm.translator import translate
 
 DATA_SIZE = 64
+MAX_CONSTANT = (1 << 30) - 1
+MIN_CONSTANT = -(1 << 30)
 
 
 def make_machine(source, data_size=DATA_SIZE):
@@ -111,11 +113,81 @@ class ErrorsTest(unittest.TestCase):
         with self.assertRaises(VmError):
             Machine(bytes([0x8C, 0xB6])).run()
 
-    def test_abs_is_not_supported_yet(self):
-        """Команда abs() будет реализована на этапе 4."""
+    def test_unsupported_command(self):
+        """Команда без обработчика сообщается как неподдерживаемая."""
+        machine = make_machine("r1 = 1")
+        del machine.handlers["LOAD"]
         with self.assertRaises(VmError) as context:
-            run_source("mem[r1] = abs(r2)")
-        self.assertIn("ABS", str(context.exception))
+            machine.run()
+        self.assertIn("LOAD", str(context.exception))
+
+
+class SignedValuesTest(unittest.TestCase):
+    """Константа LOAD знаковая, значения в памяти хранятся со знаком."""
+
+    def test_negative_constant(self):
+        """Отрицательная константа попадает в регистр со знаком."""
+        machine = run_source("r3 = -5")
+        self.assertEqual(machine.registers[3], -5)
+
+    def test_constant_boundaries(self):
+        """Границы знаковой 31-битной константы."""
+        machine = run_source(f"r1 = {MIN_CONSTANT}\nr2 = {MAX_CONSTANT}")
+        self.assertEqual(machine.registers[1], MIN_CONSTANT)
+        self.assertEqual(machine.registers[2], MAX_CONSTANT)
+
+    def test_negative_value_through_memory(self):
+        """Отрицательное значение сохраняется в память и читается обратно."""
+        machine = run_source("r1 = -8\nmem[2] = r1\nr2 = mem[2]")
+        self.assertEqual(machine.data[2], -8)
+        self.assertEqual(machine.registers[2], -8)
+
+
+class AbsTest(unittest.TestCase):
+    """Команда abs(): mem[rC] = abs(rB)."""
+
+    def test_negative_value(self):
+        """Модуль отрицательного числа записывается по адресу из регистра."""
+        machine = run_source("r1 = -17\nr2 = 5\nmem[r2] = abs(r1)")
+        self.assertEqual(machine.data[5], 17)
+        self.assertEqual(machine.executed, 3)
+
+    def test_positive_value_and_zero(self):
+        """Модуль неотрицательного числа равен самому числу."""
+        source = "r1 = 25\nr2 = 1\nmem[r2] = abs(r1)\nr3 = 0\nmem[r3] = abs(r3)"
+        machine = run_source(source)
+        self.assertEqual(machine.data[1], 25)
+        self.assertEqual(machine.data[0], 0)
+
+    def test_source_register_is_not_changed(self):
+        """Исходный регистр после abs() не меняется."""
+        machine = run_source("r1 = -17\nr2 = 5\nmem[r2] = abs(r1)")
+        self.assertEqual(machine.registers[1], -17)
+        self.assertEqual(machine.registers[2], 5)
+
+    def test_extreme_value(self):
+        """Модуль наименьшей константы не помещается в 31 бит, но верен."""
+        source = f"r1 = {MIN_CONSTANT}\nr2 = 7\nmem[r2] = abs(r1)"
+        machine = run_source(source)
+        self.assertEqual(machine.data[7], -MIN_CONSTANT)
+
+    def test_same_register_as_value_and_address(self):
+        """Один регистр может быть и значением, и адресом."""
+        machine = run_source("r4 = 9\nmem[r4] = abs(r4)")
+        self.assertEqual(machine.data[9], 9)
+
+    def test_address_out_of_memory(self):
+        """Адрес из регистра за пределами памяти данных."""
+        with self.assertRaises(VmError) as context:
+            run_source(f"r1 = {DATA_SIZE}\nmem[r1] = abs(r1)")
+        self.assertIn("смещение 6", str(context.exception))
+
+    def test_negative_address(self):
+        """Отрицательный адрес не превращается в индекс с конца."""
+        machine = make_machine("r1 = -1\nmem[r1] = abs(r1)")
+        with self.assertRaises(VmError):
+            machine.run()
+        self.assertEqual(machine.data, [0] * DATA_SIZE)
 
 
 if __name__ == "__main__":

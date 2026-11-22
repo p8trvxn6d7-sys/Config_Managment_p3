@@ -7,6 +7,8 @@ from uvm.translator import RULES, AssemblerError, translate
 
 MAX_REGISTER = (1 << 6) - 1
 MAX_VALUE = (1 << 31) - 1
+MAX_CONSTANT = (1 << 30) - 1
+MIN_CONSTANT = -(1 << 30)
 
 
 class SyntaxTest(unittest.TestCase):
@@ -52,6 +54,27 @@ class SyntaxTest(unittest.TestCase):
         self.assertEqual(names, ["LOAD", "READ", "WRITE"])
 
 
+class SignedConstantTest(unittest.TestCase):
+    """Константа команды LOAD - знаковая (дополнительный код, 31 бит)."""
+
+    def test_negative_constant_field(self):
+        """Отрицательная константа записывается в поле C в доп. коде."""
+        cases = (
+            ("r1 = -1", MAX_VALUE),
+            ("r1 = -5", MAX_VALUE - 4),
+            ("r1 = -0x10", MAX_VALUE - 15),
+            ("r1 = -0b101", MAX_VALUE - 4),
+            ("r1 = -0", 0),
+        )
+        for source, expected in cases:
+            with self.subTest(source=source):
+                self.assertEqual(translate(source)[0].fields["C"], expected)
+
+    def test_positive_constant_is_unchanged(self):
+        """Неотрицательная константа записывается как есть."""
+        self.assertEqual(translate("r1 = 374")[0].fields["C"], 374)
+
+
 class LimitsTest(unittest.TestCase):
     """Проверка границ значений полей."""
 
@@ -61,14 +84,23 @@ class LimitsTest(unittest.TestCase):
         with self.assertRaises(AssemblerError):
             translate(f"r{MAX_REGISTER + 1} = 0")
 
-    def test_value_bounds(self):
-        """Константа и адрес: максимум 2^31 - 1."""
-        translate(f"r0 = {MAX_VALUE}")
+    def test_address_bounds(self):
+        """Адрес памяти - беззнаковый, максимум 2^31 - 1."""
+        translate(f"r0 = mem[{MAX_VALUE}]")
         translate(f"mem[{MAX_VALUE}] = r0")
         with self.assertRaises(AssemblerError):
-            translate(f"r0 = {MAX_VALUE + 1}")
-        with self.assertRaises(AssemblerError):
             translate(f"r0 = mem[{MAX_VALUE + 1}]")
+        with self.assertRaises(AssemblerError):
+            translate(f"mem[{MAX_VALUE + 1}] = r0")
+
+    def test_constant_bounds(self):
+        """Константа LOAD: от -2^30 до 2^30 - 1."""
+        translate(f"r0 = {MAX_CONSTANT}")
+        translate(f"r0 = {MIN_CONSTANT}")
+        with self.assertRaises(AssemblerError):
+            translate(f"r0 = {MAX_CONSTANT + 1}")
+        with self.assertRaises(AssemblerError):
+            translate(f"r0 = {MIN_CONSTANT - 1}")
 
     def test_abs_register_bounds(self):
         """В команде abs оба регистра ограничены 6 битами, поле C - тоже."""
@@ -89,10 +121,19 @@ class ErrorsTest(unittest.TestCase):
         self.assertEqual(context.exception.line, 3)
         self.assertIn("строка 3", str(context.exception))
 
-    def test_negative_number(self):
-        """Отрицательные числа не поддерживаются."""
-        with self.assertRaises(AssemblerError):
-            translate("r1 = -5")
+    def test_negative_address(self):
+        """Отрицательные адреса не поддерживаются."""
+        for source in ("r1 = mem[-5]", "mem[-5] = r1"):
+            with self.subTest(source=source):
+                with self.assertRaises(AssemblerError):
+                    translate(source)
+
+    def test_constant_error_reports_line(self):
+        """Выход константы за границы сообщается с номером строки."""
+        with self.assertRaises(AssemblerError) as context:
+            translate(f"r1 = 1\nr2 = {MAX_CONSTANT + 1}")
+        self.assertEqual(context.exception.line, 2)
+        self.assertIn("знаков", str(context.exception))
 
     def test_indirect_write_is_not_supported(self):
         """Косвенная запись mem[rN] = rM в этом варианте не существует."""
@@ -115,6 +156,13 @@ class RulesTest(unittest.TestCase):
                 spec = COMMANDS[rule.command]
                 fields = sorted(field.name for field in spec.operands)
                 self.assertEqual(sorted(rule.operands), fields)
+
+    def test_only_load_has_signed_operand(self):
+        """Знаковый операнд есть только у команды LOAD (поле C)."""
+        signed = {rule.command: rule.signed for rule in RULES}
+        self.assertEqual(signed["LOAD"], ("C",))
+        for command in ("READ", "WRITE", "ABS"):
+            self.assertEqual(signed[command], ())
 
 
 if __name__ == "__main__":

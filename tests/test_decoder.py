@@ -27,6 +27,8 @@ SPEC_CASES = (
 
 MAX_REGISTER = (1 << 6) - 1
 MAX_VALUE = (1 << 31) - 1
+MAX_CONSTANT = (1 << 30) - 1
+MIN_CONSTANT = -(1 << 30)
 
 
 class SpecDecodeTest(unittest.TestCase):
@@ -56,7 +58,9 @@ class RoundTripTest(unittest.TestCase):
         """decode(encode(x)) возвращает исходную команду."""
         sources = (
             "r0 = 0",
-            f"r{MAX_REGISTER} = {MAX_VALUE}",
+            "r1 = -1",
+            f"r{MAX_REGISTER} = {MAX_CONSTANT}",
+            f"r{MAX_REGISTER} = {MIN_CONSTANT}",
             f"r1 = mem[{MAX_VALUE}]",
             f"mem[{MAX_VALUE}] = r{MAX_REGISTER}",
             f"mem[r{MAX_REGISTER}] = abs(r0)",

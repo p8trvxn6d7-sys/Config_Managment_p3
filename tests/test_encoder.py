@@ -40,6 +40,8 @@ SPEC_CASES = (
 
 MAX_REGISTER = (1 << 6) - 1
 MAX_VALUE = (1 << 31) - 1
+MAX_CONSTANT = (1 << 30) - 1
+MIN_CONSTANT = -(1 << 30)
 
 
 class SpecBytesTest(unittest.TestCase):
@@ -81,10 +83,28 @@ class EncodingTest(unittest.TestCase):
         self.assertEqual(encode([]), b"")
 
     def test_max_load(self):
-        """Максимальные значения полей помещаются в 6 байт."""
-        [instruction] = translate(f"r{MAX_REGISTER} = {MAX_VALUE}")
+        """Наибольшая константа LOAD помещается в 6 байт."""
+        [instruction] = translate(f"r{MAX_REGISTER} = {MAX_CONSTANT}")
         code = encode_instruction(instruction)
-        self.assertEqual(code, bytes([0x8C, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F]))
+        self.assertEqual(code, bytes([0x8C, 0xFF, 0xFF, 0xFF, 0xFF, 0x0F]))
+
+    def test_min_load(self):
+        """Наименьшая константа LOAD - старший бит поля C."""
+        [instruction] = translate(f"r{MAX_REGISTER} = {MIN_CONSTANT}")
+        code = encode_instruction(instruction)
+        self.assertEqual(code, bytes([0x8C, 0x3F, 0x00, 0x00, 0x00, 0x10]))
+
+    def test_negative_load(self):
+        """Отрицательная константа кодируется в дополнительном коде."""
+        [instruction] = translate("r1 = -1")
+        code = encode_instruction(instruction)
+        self.assertEqual(code, bytes([0x8C, 0xC1, 0xFF, 0xFF, 0xFF, 0x1F]))
+
+    def test_max_read(self):
+        """Наибольший адрес команды READ помещается в 6 байт."""
+        [instruction] = translate(f"r{MAX_REGISTER} = mem[{MAX_VALUE}]")
+        code = encode_instruction(instruction)
+        self.assertEqual(code, bytes([0x15, 0xFF, 0xFF, 0xFF, 0xFF, 0x1F]))
 
     def test_max_abs(self):
         """Максимальные значения полей помещаются в 3 байта."""

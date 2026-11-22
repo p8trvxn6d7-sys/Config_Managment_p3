@@ -2,16 +2,19 @@
 
 Память команд (code) и память данных (data) разделены: программа не может
 ни прочитать, ни изменить собственный код. Регистры и ячейки данных хранят
-целые числа; разрядность в спецификации не задана.
+целые числа со знаком; разрядность в спецификации не задана.
+Константа команды LOAD - знаковая (31 бит, дополнительный код).
 """
 
 from typing import Callable, Dict, List
 
 from .decoder import DecodeError, decode_instruction
+from .spec import VALUE_C
 from .translator import Instruction
 
 REGISTER_COUNT = 64
 DATA_MEMORY_SIZE = 1 << 16
+FIRST_ADDRESS = 0
 
 
 class VmError(Exception):
@@ -31,20 +34,21 @@ class Machine:
             "LOAD": self.execute_load,
             "READ": self.execute_read,
             "WRITE": self.execute_write,
+            "ABS": self.execute_abs,
         }
 
     def check_address(self, address: int) -> None:
         """Убедиться, что адрес лежит в памяти данных."""
-        if address >= len(self.data):
+        if not FIRST_ADDRESS <= address < len(self.data):
             raise VmError(
                 f"адрес {address} вне памяти данных "
                 f"(размер {len(self.data)})"
             )
 
     def execute_load(self, instruction: Instruction) -> None:
-        """LOAD: записать константу C в регистр B."""
+        """LOAD: записать знаковую константу C в регистр B."""
         fields = instruction.fields
-        self.registers[fields["B"]] = fields["C"]
+        self.registers[fields["B"]] = VALUE_C.to_signed(fields["C"])
 
     def execute_read(self, instruction: Instruction) -> None:
         """READ: записать в регистр B значение из памяти по адресу C."""
@@ -57,6 +61,13 @@ class Machine:
         fields = instruction.fields
         self.check_address(fields["C"])
         self.data[fields["C"]] = self.registers[fields["B"]]
+
+    def execute_abs(self, instruction: Instruction) -> None:
+        """ABS: записать модуль регистра B в память по адресу из регистра C."""
+        fields = instruction.fields
+        address = self.registers[fields["C"]]
+        self.check_address(address)
+        self.data[address] = abs(self.registers[fields["B"]])
 
     def fetch(self) -> Instruction:
         """Прочитать команду по счётчику команд и сдвинуть его."""

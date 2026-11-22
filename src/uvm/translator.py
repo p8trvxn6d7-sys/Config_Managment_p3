@@ -1,7 +1,9 @@
 """Трансляция программы на языке ассемблера во внутреннее представление.
 
 Внутреннее представление - список объектов Instruction: имя команды и
-упорядоченный словарь «имя поля -> значение» (A, B, C, ...).
+упорядоченный словарь «имя поля -> значение» (A, B, C, ...). Значение
+поля - число, как оно записывается в биты команды. Знаковая константа
+команды LOAD хранится в поле в дополнительном коде.
 """
 
 import re
@@ -12,6 +14,7 @@ from .spec import COMMANDS, OPCODE_FIELD, Field
 
 COMMENT_MARK = "#"
 FIRST_LINE_NUMBER = 1
+NEGATIVE_SIGN = "-"
 HEX_PREFIX = "0x"
 BIN_PREFIX = "0b"
 HEX_BASE = 16
@@ -19,6 +22,7 @@ BIN_BASE = 2
 DEC_BASE = 10
 
 NUMBER = r"(0x[0-9a-f]+|0b[01]+|\d+)"
+SIGNED_NUMBER = r"(-?(?:0x[0-9a-f]+|0b[01]+|\d+))"
 REGISTER = r"r(\d+)"
 
 
@@ -55,15 +59,23 @@ class SyntaxRule:
 
     operands - имена полей, которым соответствуют группы регулярного
     выражения (по порядку следования в тексте команды).
+    signed - имена полей, значение которых записывается со знаком
+    (в дополнительном коде).
     """
 
     command: str
     regex: Pattern
     operands: Tuple[str, ...]
+    signed: Tuple[str, ...] = ()
 
 
 RULES = (
-    SyntaxRule("LOAD", re.compile(rf"{REGISTER}\s*=\s*{NUMBER}"), ("B", "C")),
+    SyntaxRule(
+        "LOAD",
+        re.compile(rf"{REGISTER}\s*=\s*{SIGNED_NUMBER}"),
+        ("B", "C"),
+        ("C",),
+    ),
     SyntaxRule(
         "READ",
         re.compile(rf"{REGISTER}\s*=\s*mem\[\s*{NUMBER}\s*\]"),
@@ -83,7 +95,9 @@ RULES = (
 
 
 def parse_number(text: str) -> int:
-    """Разобрать целое число: десятичное, 0x... или 0b..."""
+    """Разобрать целое число: десятичное, 0x... или 0b..., со знаком минус."""
+    if text.startswith(NEGATIVE_SIGN):
+        return -parse_number(text[len(NEGATIVE_SIGN):])
     if text.startswith(HEX_PREFIX):
         return int(text, HEX_BASE)
     if text.startswith(BIN_PREFIX):
@@ -100,6 +114,25 @@ def check_fits(field: Field, value: int) -> None:
         )
 
 
+def check_signed_fits(field: Field, value: int) -> None:
+    """Убедиться, что знаковое значение помещается в поле."""
+    if not field.signed_min <= value <= field.signed_max:
+        raise AssemblerError(
+            f"значение {value} не помещается в знаковое поле {field.name} "
+            f"({field.width} бит, от {field.signed_min} "
+            f"до {field.signed_max})"
+        )
+
+
+def to_field_value(field: Field, value: int, signed: bool) -> int:
+    """Получить значение поля: беззнаковое или в дополнительном коде."""
+    if not signed:
+        check_fits(field, value)
+        return value
+    check_signed_fits(field, value)
+    return value & field.mask
+
+
 def build_instruction(rule: SyntaxRule, groups: Tuple[str, ...]) -> Instruction:
     """Собрать команду по найденной форме и значениям операндов."""
     spec = COMMANDS[rule.command]
@@ -108,8 +141,8 @@ def build_instruction(rule: SyntaxRule, groups: Tuple[str, ...]) -> Instruction:
         values[name] = parse_number(text)
     fields = {}
     for field in spec.fields:
-        check_fits(field, values[field.name])
-        fields[field.name] = values[field.name]
+        signed = field.name in rule.signed
+        fields[field.name] = to_field_value(field, values[field.name], signed)
     return Instruction(rule.command, fields)
 
 

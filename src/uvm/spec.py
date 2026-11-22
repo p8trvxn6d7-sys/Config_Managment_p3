@@ -1,7 +1,7 @@
 """Спецификация команд УВМ (вариант 31).
 
 Модуль описывает только формат команд: код операции, разбивку на поля и
-размер в байтах. Выполнение команд относится к интерпретатору (этапы 3-4).
+размер в байтах. Выполнение команд относится к интерпретатору.
 """
 
 from dataclasses import dataclass
@@ -25,6 +25,21 @@ class Field:
     def mask(self) -> int:
         """Максимальное значение, которое помещается в поле."""
         return (1 << self.width) - 1
+
+    @property
+    def signed_min(self) -> int:
+        """Наименьшее знаковое число (дополнительный код) в поле."""
+        return -(1 << (self.width - 1))
+
+    @property
+    def signed_max(self) -> int:
+        """Наибольшее знаковое число (дополнительный код) в поле."""
+        return (1 << (self.width - 1)) - 1
+
+    def to_signed(self, raw: int) -> int:
+        """Преобразовать значение поля в знаковое число."""
+        sign_bit = 1 << (self.width - 1)
+        return raw - (1 << self.width) if raw & sign_bit else raw
 
 
 OPCODE_FIELD = Field("A", 0, 7)
