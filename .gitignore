@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Артефакты сборки и результаты ассемблирования
+build/
+dist/
+*.bin
+*.egg-info/
+
+# Архивы
+*.zip
+*.tar
+*.tar.gz
+
+# Настройки редакторов и ОС
+.idea/
+.vscode/
+*.swp
+.DS_Store
